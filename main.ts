@@ -10,15 +10,16 @@ const S = [[0, 0, 0, 0], [1, 1, 0, 1], [2, 4, 0, 1], [3, 0, 1, 0], [4, 0, 1, 2],
   [33, 0, 2, 1], [34, 0, 2, 1], [48, 2, 0, 0], [49, 2, 1, 0], [50, 2, 1, 0], [51, 2, 0, 0],
   [52, 0, 0, 0], [64, 0, 1, 1], [65, 0, 2, 0], [80, 0, 1, 0], [81, 0, 1, 0], [82, 0, 0, 1],
   [83, 0, 1, 0]];
-const IM = new Int8Array(256).fill(-1), PO = new Uint8Array(256), PU = new Uint8Array(256);
+const REGS = 256, STACK = 256, CALL_DEPTH = 64, OUT_CAP = 65536, STEP_CAP = 1000000;
+const IM = new Int8Array(REGS).fill(-1), PO = new Uint8Array(REGS), PU = new Uint8Array(REGS);
 for (const [b, i, p, q] of S) { IM[b] = i; PO[b] = p; PU[b] = q; }
 
 function run(P: Uint8Array, input: Uint8Array) {
-  const n = P.length, D = new Int32Array(256), C = new Int32Array(64), M = new Int32Array(256);
-  const out = new Uint8Array(65536), L = input.length;
+  const n = P.length, D = new Int32Array(STACK), C = new Int32Array(CALL_DEPTH), M = new Int32Array(REGS);
+  const out = new Uint8Array(OUT_CAP), L = input.length;
   let sp = 0, csp = 0, olen = 0, ip = 0, pc = 0, steps = 0, ex = 0;
   loop: for (;;) {
-    if (steps === 1000000) { ex = 10; break; }
+    if (steps === STEP_CAP) { ex = 10; break; }
     if (pc < 0 || pc >= n) { ex = 9; break; }
     const op = P[pc], imm = IM[op];
     if (imm < 0) { ex = 5; break; }
@@ -26,7 +27,7 @@ function run(P: Uint8Array, input: Uint8Array) {
     steps++;
     const nx = pc + 1 + imm, pops = PO[op];
     if (sp < pops) { ex = 2; break; }
-    if (sp - pops + PU[op] > 256) { ex = 3; break; }
+    if (sp - pops + PU[op] > STACK) { ex = 3; break; }
     pc = nx;
     switch (op) {
       case 0: ex = 0; break loop;
@@ -75,7 +76,7 @@ function run(P: Uint8Array, input: Uint8Array) {
       case 49: { const r = ((P[nx - 2] | P[nx - 1] << 8) << 16) >> 16; if (D[--sp] === 0) pc = nx + r; break; }
       case 50: { const r = ((P[nx - 2] | P[nx - 1] << 8) << 16) >> 16; if (D[--sp] !== 0) pc = nx + r; break; }
       case 51: {
-        if (csp === 64) { ex = 7; break loop; }
+        if (csp === CALL_DEPTH) { ex = 7; break loop; }
         C[csp++] = nx; pc = P[nx - 2] | P[nx - 1] << 8; break;
       }
       case 52: if (csp === 0) { ex = 8; break loop; } pc = C[--csp]; break;
@@ -91,11 +92,11 @@ function run(P: Uint8Array, input: Uint8Array) {
       }
       case 80: {
         const s = '' + D[sp - 1];
-        if (olen + s.length > 65536) { ex = 11; break loop; }
+        if (olen + s.length > OUT_CAP) { ex = 11; break loop; }
         sp--; for (let i = 0; i < s.length; i++) out[olen++] = s.charCodeAt(i); break;
       }
       case 81:
-        if (olen + 1 > 65536) { ex = 11; break loop; }
+        if (olen + 1 > OUT_CAP) { ex = 11; break loop; }
         out[olen++] = D[--sp] & 255; break;
       case 82: D[sp++] = ip < L ? input[ip++] : -1; break;
       default: ex = D[--sp] & 255; break loop;
@@ -104,13 +105,21 @@ function run(P: Uint8Array, input: Uint8Array) {
   return { o: out.subarray(0, olen), ex };
 }
 
-const I = process.env.MAKEFUN_INPUT_DIR ?? '/input';
-const O = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
-for (const d of readdirSync(I, { withFileTypes: true })) {
-  if (!d.isDirectory()) continue;
-  const id = d.name, r = run(new Uint8Array(readFileSync(join(I, id, 'program.bin'))),
-    new Uint8Array(readFileSync(join(I, id, 'input.bin'))));
-  mkdirSync(join(O, id), { recursive: true });
-  writeFileSync(join(O, id, 'stdout.bin'), r.o);
-  writeFileSync(join(O, id, 'exit.txt'), r.ex + '\n');
+// Each case directory holds program.bin and input.bin; the answers go to stdout.bin and exit.txt.
+function solveCase(dir: string, outDir: string, id: string) {
+  const r = run(new Uint8Array(readFileSync(join(dir, id, 'program.bin'))),
+    new Uint8Array(readFileSync(join(dir, id, 'input.bin'))));
+  mkdirSync(join(outDir, id), { recursive: true });
+  writeFileSync(join(outDir, id, 'stdout.bin'), r.o);
+  writeFileSync(join(outDir, id, 'exit.txt'), r.ex + '\n');
 }
+
+function main() {
+  const I = process.env.MAKEFUN_INPUT_DIR ?? '/input';
+  const O = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
+  for (const d of readdirSync(I, { withFileTypes: true })) {
+    if (d.isDirectory()) solveCase(I, O, d.name);
+  }
+}
+
+main();
